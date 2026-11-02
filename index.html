@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Travel Booking Demo</title>
+  <title>Simple Flight Search Demo</title>
   <style>
     body { font: 16px Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; color: #17243b; }
     form, .card, section { padding: 16px; margin: 16px 0; border: 1px solid #ddd; border-radius: 10px; }
@@ -11,13 +11,17 @@
     input, select, button { padding: 9px; }
     button { cursor: pointer; }
     .warning { padding: 12px; background: #fff4d6; }
+    .database-status { padding: 10px 12px; border-radius: 8px; background: #f0f3f8; color: #43516a; font-size: 13px; }
+    .consent { display: flex; align-items: flex-start; gap: 8px; margin: 12px 5px; font-size: 13px; }
+    .consent input { margin-top: 3px; }
+    .consent-note { color: #5f6b7e; font-size: 12px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 9px; border-bottom: 1px solid #ddd; text-align: left; }
   </style>
 </head>
 <body>
   <h1>Flight Booking Demo</h1>
-  <p class="warning">Demo only: sample fares, no live airline inventory, payment, reservation, or ticket.</p>
+  <p class="warning">Independent demo only: sample fares; no live airline inventory, payment, reservation, or ticket.</p>
 
   <form id="searchForm">
     <label>From <input name="origin" value="Nairobi (NBO)" required></label>
@@ -29,8 +33,13 @@
         <option value="3">3</option><option value="4">4</option>
       </select>
     </label>
+    <label class="consent"><input name="saveConsent" type="checkbox" required>
+      <span>I agree to save my route, departure date, traveler count, and search time for this demo. Do not enter personal or payment details.</span>
+    </label>
     <button>Search flights</button>
   </form>
+
+  <p id="databaseStatus" class="database-status" role="status" aria-live="polite">Checking database configuration…</p>
 
   <section>
     <h2>Sample flights</h2>
@@ -48,6 +57,7 @@
     <div id="bookings"></div>
   </section>
 
+  <script src="supabase-config.js"></script>
   <script>
     const bookingKey = "travel-demo-bookings";
     const databaseName = "travel-search-demo";
@@ -56,6 +66,17 @@
       { code: "KQ 102", time: "09:35", fare: 74900, stops: "1 stop" },
       { code: "KQ 104", time: "13:20", fare: 93200, stops: "Direct" }
     ];
+    const supabaseConfig = window.SUPABASE_CONFIG || {};
+    const supabaseUrl = String(supabaseConfig.url || "").replace(/\/+$/, "");
+    const supabaseKey = String(supabaseConfig.anonKey || "");
+    const remoteDatabaseEnabled = Boolean(supabaseUrl && supabaseKey);
+    const databaseStatus = document.querySelector("#databaseStatus");
+
+    if (remoteDatabaseEnabled) {
+      databaseStatus.textContent = "Shared database configured. Search details will be saved to Supabase; recent search history remains in this browser.";
+    } else {
+      databaseStatus.textContent = "Shared database not configured. Searches are saved only in this browser until Supabase is set up.";
+    }
 
     function openDatabase() {
       return new Promise((resolve, reject) => {
@@ -79,6 +100,30 @@
         tx.onerror = () => reject(tx.error);
       });
       showSearches();
+    }
+
+    async function saveSearchToSupabase(search) {
+      if (!remoteDatabaseEnabled) return false;
+      const response = await fetch(`${supabaseUrl}/rest/v1/flight_searches`, {
+        method: "POST",
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal"
+        },
+        body: JSON.stringify({
+          origin: search.origin.trim(),
+          destination: search.destination.trim(),
+          depart_date: search.date,
+          travelers: search.travelers
+        })
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`Supabase rejected the search (${response.status}): ${detail.slice(0, 240)}`);
+      }
+      return true;
     }
 
     async function showSearches() {
@@ -125,7 +170,20 @@
       try {
         await saveSearch(data);
       } catch (error) {
+        console.error("Could not save search in browser-local history.", error);
         alert("Could not save search in this browser: " + error.message);
+      }
+      if (remoteDatabaseEnabled) {
+        try {
+          await saveSearchToSupabase(data);
+          databaseStatus.textContent = "Search saved to the shared Supabase database. Recent search history is also saved in this browser.";
+        } catch (error) {
+          console.error("Could not save search to Supabase.", error);
+          databaseStatus.textContent = "Could not save this search to the shared database. The sample results are shown, and browser-local history may still be available.";
+          alert("Shared database save failed. " + error.message);
+        }
+      } else {
+        databaseStatus.textContent = "No shared database configured: this search is stored only in this browser.";
       }
 
       document.querySelector("#results").innerHTML = flights.map((flight, index) =>
@@ -156,9 +214,14 @@
         reference, origin, destination, date, travelers,
         flight: flight.code, fare: flight.fare * travelers
       });
-      localStorage.setItem(bookingKey, JSON.stringify(records));
-      showBookings();
-      alert(`Demo booking saved: ${reference}. No ticket was issued.`);
+      try {
+        localStorage.setItem(bookingKey, JSON.stringify(records));
+        showBookings();
+        alert(`Demo booking saved: ${reference}. It is stored in this browser only. No ticket was issued.`);
+      } catch (error) {
+        console.error("Could not save demo booking to browser storage.", error);
+        alert("Could not save the demo booking in this browser: " + error.message);
+      }
     });
 
     document.querySelector("#clearSearches").addEventListener("click", async () => {
