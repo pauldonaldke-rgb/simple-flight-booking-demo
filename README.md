@@ -49,8 +49,6 @@ use demo flight data to confirm or sell real fares.
 
 ## Deployment
 
-Before the first deployment, open the repository's **Settings → Pages** and set
-the build and deployment source to **GitHub Actions**. The repository owner must
-enable this once; the workflow cannot change that repository setting. Afterward,
-GitHub Actions deploys the static site whenever `main` changes. You can also run
-the workflow manually from the **Actions** tab.
+GitHub Pages publishes directly from the `main` branch root. Push site changes
+to `main` and Pages will publish them. This avoids creating a downloadable
+GitHub Actions deployment artifact.
