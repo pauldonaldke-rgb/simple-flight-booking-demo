@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Travel Booking Demo</title>
+  <style>
+    body { font: 16px Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; color: #17243b; }
+    form, .card, section { padding: 16px; margin: 16px 0; border: 1px solid #ddd; border-radius: 10px; }
+    label { display: inline-grid; gap: 5px; margin: 5px; }
+    input, select, button { padding: 9px; }
+    button { cursor: pointer; }
+    .warning { padding: 12px; background: #fff4d6; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 9px; border-bottom: 1px solid #ddd; text-align: left; }
+  </style>
+</head>
+<body>
+  <h1>Flight Booking Demo</h1>
+  <p class="warning">Demo only: sample fares, no live airline inventory, payment, reservation, or ticket.</p>
+
+  <form id="searchForm">
+    <label>From <input name="origin" value="Nairobi (NBO)" required></label>
+    <label>To <input name="destination" value="London (LHR)" required></label>
+    <label>Departure <input name="date" type="date" required></label>
+    <label>Travelers
+      <select name="travelers">
+        <option value="1">1</option><option value="2">2</option>
+        <option value="3">3</option><option value="4">4</option>
+      </select>
+    </label>
+    <button>Search flights</button>
+  </form>
+
+  <section>
+    <h2>Sample flights</h2>
+    <div id="results">Search to see sample flights.</div>
+  </section>
+
+  <section>
+    <h2>Recent searches <button id="clearSearches">Clear</button></h2>
+    <div id="searchHistory"></div>
+  </section>
+
+  <section>
+    <h2>Demo booking database <button id="refreshBookings">Refresh</button></h2>
+    <p>Booking rows are stored in this browser only.</p>
+    <div id="bookings"></div>
+  </section>
+
+  <script>
+    const bookingKey = "travel-demo-bookings";
+    const databaseName = "travel-search-demo";
+    const flights = [
+      { code: "KQ 100", time: "23:59", fare: 86400, stops: "Direct" },
+      { code: "KQ 102", time: "09:35", fare: 74900, stops: "1 stop" },
+      { code: "KQ 104", time: "13:20", fare: 93200, stops: "Direct" }
+    ];
+
+    function openDatabase() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(databaseName, 1);
+        request.onupgradeneeded = () => {
+          request.result.createObjectStore("searches", {
+            keyPath: "id", autoIncrement: true
+          });
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    async function saveSearch(search) {
+      const db = await openDatabase();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("searches", "readwrite");
+        tx.objectStore("searches").add({ ...search, createdAt: new Date().toISOString() });
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      showSearches();
+    }
+
+    async function showSearches() {
+      const db = await openDatabase();
+      const searches = await new Promise((resolve, reject) => {
+        const request = db.transaction("searches").objectStore("searches").getAll();
+        request.onsuccess = () => resolve(request.result.reverse());
+        request.onerror = () => reject(request.error);
+      });
+      document.querySelector("#searchHistory").innerHTML = searches.length
+        ? searches.map(s => `<p>${escapeHtml(s.origin)} → ${escapeHtml(s.destination)}
+            · ${escapeHtml(s.date)} · ${s.travelers} traveler(s)</p>`).join("")
+        : "<p>No searches saved yet.</p>";
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, c =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+      );
+    }
+
+    function readBookings() {
+      return JSON.parse(localStorage.getItem(bookingKey) || "[]");
+    }
+
+    function showBookings() {
+      const records = readBookings();
+      document.querySelector("#bookings").innerHTML = records.length
+        ? `<table><thead><tr><th>Reference</th><th>Route</th><th>Flight</th>
+            <th>Date</th><th>Demo fare</th><th>Status</th></tr></thead><tbody>
+            ${records.map(b => `<tr><td>${escapeHtml(b.reference)}</td>
+              <td>${escapeHtml(b.origin)} → ${escapeHtml(b.destination)}</td>
+              <td>${escapeHtml(b.flight)}</td><td>${escapeHtml(b.date)}</td>
+              <td>KES ${Number(b.fare).toLocaleString()}</td>
+              <td>Demo · not ticketed</td></tr>`).join("")}
+            </tbody></table>`
+        : "<p>No demo bookings yet.</p>";
+    }
+
+    document.querySelector("#searchForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.currentTarget));
+      data.travelers = Number(data.travelers);
+      try {
+        await saveSearch(data);
+      } catch (error) {
+        alert("Could not save search in this browser: " + error.message);
+      }
+
+      document.querySelector("#results").innerHTML = flights.map((flight, index) =>
+        `<article class="card">
+          <strong>Kenya Airways · ${flight.code}</strong>
+          <p>${escapeHtml(data.origin)} → ${escapeHtml(data.destination)}
+            · ${flight.time} · ${flight.stops}</p>
+          <p>Sample fare: KES ${flight.fare.toLocaleString()} per traveler</p>
+          <button type="button" data-flight="${index}">Book demo flight</button>
+        </article>`
+      ).join("");
+    });
+
+    document.querySelector("#results").addEventListener("click", event => {
+      const button = event.target.closest("[data-flight]");
+      if (!button) return;
+
+      const flight = flights[Number(button.dataset.flight)];
+      const data = new FormData(document.querySelector("#searchForm"));
+      const origin = data.get("origin");
+      const destination = data.get("destination");
+      const date = data.get("date");
+      const travelers = Number(data.get("travelers"));
+      const reference = "DEMO-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+
+      const records = readBookings();
+      records.unshift({
+        reference, origin, destination, date, travelers,
+        flight: flight.code, fare: flight.fare * travelers
+      });
+      localStorage.setItem(bookingKey, JSON.stringify(records));
+      showBookings();
+      alert(`Demo booking saved: ${reference}. No ticket was issued.`);
+    });
+
+    document.querySelector("#clearSearches").addEventListener("click", async () => {
+      const db = await openDatabase();
+      const tx = db.transaction("searches", "readwrite");
+      tx.objectStore("searches").clear();
+      tx.oncomplete = showSearches;
+    });
+
+    document.querySelector("#refreshBookings").addEventListener("click", showBookings);
+    showSearches();
+    showBookings();
+  </script>
+</body>
+</html>
